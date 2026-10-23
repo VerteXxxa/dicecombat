@@ -75,6 +75,7 @@ canvas#game {
   padding: 4px;
   pointer-events: auto;
   cursor: pointer; outline: none;
+  touch-action: manipulation; /* Убирает задержку тапа */
   box-shadow: 0 4px 10px rgba(0,0,0,.5);
   transition: transform .3s ease, border-color .5s ease;
   -webkit-appearance: none;
@@ -171,6 +172,7 @@ canvas#game {
   color: #10202f; background: linear-gradient(180deg, #ffe066, #f2b705);
   box-shadow: 0 8px 0 #a87a00, 0 12px 24px rgba(0,0,0,.5);
   transition: transform .2s ease, box-shadow .2s ease;
+  touch-action: manipulation;
 }
 .big-btn:active{ transform: translateY(5px); box-shadow: 0 3px 0 #a87a00, 0 6px 14px rgba(0,0,0,.5); }
 
@@ -180,6 +182,7 @@ canvas#game {
   display: flex; align-items: center; justify-content: center;
   box-shadow: 0 4px 0 #222;
   transition: transform .2s, box-shadow .2s;
+  touch-action: manipulation;
 }
 .circle-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #222; }
 .circle-btn:disabled { opacity: 0.3; box-shadow: 0 4px 0 #111; }
@@ -204,6 +207,7 @@ canvas#game {
   font-family: inherit; font-size: 15px; font-weight: 800; color: #cfe0f0;
   background: rgba(255,255,255,.07); border: 2px solid rgba(255,255,255,.14);
   transition: all .3s ease; -webkit-appearance: none;
+  touch-action: manipulation;
 }
 .opt.selected { color: #10202f; background: linear-gradient(180deg, #ffe066, #f2b705); border-color: #fff3b0; box-shadow: 0 6px 16px rgba(242,183,5,.35); }
 #start-btn {
@@ -212,6 +216,7 @@ canvas#game {
   font-family: inherit; font-size: 19px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; color: #10202f;
   background: linear-gradient(180deg, #7ef29b, #22b455); box-shadow: 0 8px 0 #14702f, 0 14px 28px rgba(0,0,0,.5);
   transition: transform .2s ease, box-shadow .2s ease;
+  touch-action: manipulation;
 }
 #start-btn:active { transform: translateY(5px); box-shadow: 0 3px 0 #14702f, 0 6px 14px rgba(0,0,0,.5); }
 </style>
@@ -733,23 +738,23 @@ function updateMoveUI() {
   movePlusBtn.disabled = state.moveAmount >= state.maxMoveAmount;
 }
 
-moveMinusBtn.addEventListener('click', e => {
-  e.stopPropagation();
+moveMinusBtn.addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
   if (state.moveAmount > 1) { state.moveAmount--; updateMoveUI(); }
 });
 
-movePlusBtn.addEventListener('click', e => {
-  e.stopPropagation();
+movePlusBtn.addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
   if (state.moveAmount < state.maxMoveAmount) { state.moveAmount++; updateMoveUI(); }
 });
 
-document.getElementById('move-cancel').addEventListener('click', e => {
-  e.stopPropagation();
+document.getElementById('move-cancel').addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
   closeMoveModal();
 });
 
-document.getElementById('move-confirm').addEventListener('click', e => {
-  e.stopPropagation();
+document.getElementById('move-confirm').addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
   executeMoveDice();
   closeMoveModal();
 });
@@ -946,8 +951,8 @@ function showToast(text, color) {
 function showTurnToast(p) { showToast('Ход: ' + P_COLORS[p].name, P_COLORS[p].main); }
 
 passBtns.forEach((btn, i) => {
-  btn.addEventListener('click', e => {
-    e.stopPropagation();
+  btn.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
     if (i === state.current && state.phase === 'idle') endTurn();
   });
 });
@@ -1021,7 +1026,10 @@ function showWinModal(p) {
   document.getElementById('win-sub').textContent = P_COLORS[p].name + ' игрок захватил всю карту!';
 }
 
-document.getElementById('again-btn').addEventListener('click', () => { overlay.classList.add('hidden'); startGame(); });
+document.getElementById('again-btn').addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
+  overlay.classList.add('hidden'); startGame();
+});
 
 /* ============================================================
    13. СТАРТ
@@ -1075,8 +1083,9 @@ function startGame() {
 
 function bindOptionGroup(groupId, onPick) {
   const group = document.getElementById(groupId);
-  group.addEventListener('click', e => {
+  group.addEventListener('pointerdown', e => {
     const btn = e.target.closest('.opt'); if (!btn) return;
+    e.preventDefault(); e.stopPropagation();
     [...group.querySelectorAll('.opt')].forEach(b => b.classList.remove('selected'));
     btn.classList.add('selected'); onPick(btn.dataset.v);
   });
@@ -1084,7 +1093,11 @@ function bindOptionGroup(groupId, onPick) {
 
 bindOptionGroup('opt-players', v => chosenPlayers = parseInt(v, 10));
 bindOptionGroup('opt-map', v => chosenMapKey = v);
-document.getElementById('start-btn').addEventListener('click', startGame);
+
+document.getElementById('start-btn').addEventListener('pointerdown', e => {
+  e.preventDefault(); e.stopPropagation();
+  startGame();
+});
 
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 250));
