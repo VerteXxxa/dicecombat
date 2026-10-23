@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#101722">
+<title>Dice Combat</title>
+<style>
+/* ============================================================
+   БАЗА
+   ============================================================ */
+:root { --ui-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; }
+body {
+  background-color: #2980b9; /* Яркий синий по умолчанию */
+  transition: background-color 1.2s ease;
+  font-family: var(--ui-font);
+  color: #fff;
+  user-select: none; -webkit-user-select: none;
+  overscroll-behavior: none;
+}
+.hidden { display: none !important; }
+
+#vignette {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(0,0,0,0) 35%, rgba(0,0,0,.4) 100%);
+}
+
+canvas#game {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  display: block; z-index: 2;
+  touch-action: none;
+}
+
+/* ============================================================
+   ИСТОРИЯ СОБЫТИЙ (ЛОГ)
+   ============================================================ */
+#event-log {
+  position: fixed; left: 50%; top: calc(12px + env(safe-area-inset-top, 0px));
+  transform: translateX(-50%);
+  z-index: 20; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  width: 100%; max-width: 300px;
+}
+.log-entry {
+  background: rgba(0, 0, 0, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px; font-weight: 600; text-align: center;
+  color: #fff; white-space: nowrap;
+  animation: slideDown 0.6s ease-out;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+@keyframes slideDown {
+  from { transform: translateY(-10px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+/* ============================================================
+   UI (Кнопки PASS)
+   ============================================================ */
+#ui { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+
+.pass-btn {
+  position: absolute;
+  display: flex; align-items: center;
+  background: #111;
+  border: 3px solid #333;
+  border-radius: 50px;
+  padding: 4px;
+  pointer-events: auto;
+  cursor: pointer; outline: none;
+  box-shadow: 0 4px 10px rgba(0,0,0,.5);
+  transition: transform .3s ease, border-color .5s ease;
+  -webkit-appearance: none;
+}
+.pass-btn.active {
+  border-color: #fff;
+  transform: scale(1.05);
+  animation: pulseRing 2.5s infinite;
+}
+@keyframes pulseRing {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255,255,255,0.4), 0 4px 10px rgba(0,0,0,0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(255,255,255,0), 0 4px 10px rgba(0,0,0,0.5); }
+}
+
+.pass-circle { width: 46px; height: 46px; border-radius: 50%; border: 3px solid #000; }
+.pass-info { padding: 0 12px 0 8px; display: flex; flex-direction: column; align-items: flex-start; color: #fff; font-weight: 900; line-height: 1; }
+.pass-info .cnt { font-size: 22px; }
+.pass-info .lbl { font-size: 11px; margin-top: 2px; letter-spacing: 1px; }
+
+.pass-btn[data-p="0"] { top: 15px; left: 15px; }
+.pass-btn[data-p="1"] { top: 15px; right: 15px; flex-direction: row-reverse; }
+.pass-btn[data-p="1"] .pass-info { align-items: flex-end; padding: 0 8px 0 12px; }
+.pass-btn[data-p="2"] { bottom: 15px; left: 15px; }
+.pass-btn[data-p="3"] { bottom: 15px; right: 15px; flex-direction: row-reverse; }
+.pass-btn[data-p="3"] .pass-info { align-items: flex-end; padding: 0 8px 0 12px; }
+
+#toast {
+  position: fixed; left: 50%; top: 20%; transform: translate(-50%, -12px);
+  z-index: 30; pointer-events: none; opacity: 0;
+  padding: 10px 24px; border-radius: 999px;
+  font-size: 16px; font-weight: 800; letter-spacing: .4px; white-space: nowrap;
+  background: rgba(0,0,0,.6); border: 2px solid rgba(255,255,255,.25);
+  transition: opacity .4s ease, transform .4s ease;
+}
+#toast.show{ opacity: 1; transform: translate(-50%, 0); }
+
+/* ============================================================
+   МОДАЛЬНЫЕ ОКНА
+   ============================================================ */
+#overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(8,12,18,.74);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  display: flex; align-items: center; justify-content: center;
+  animation: fadeIn 0.4s ease;
+}
+@keyframes fadeIn{ from{ opacity: 0; } to{ opacity: 1; } }
+
+.card {
+  width: min(92vw, 420px); padding: 18px 20px 22px;
+  border-radius: 22px; border: 2px solid rgba(255,255,255,.14);
+  background: linear-gradient(180deg, #2a3644, #18202a);
+  box-shadow: 0 24px 60px rgba(0,0,0,.65); text-align: center;
+  animation: cardPop 0.5s cubic-bezier(.2,1.4,.5,1);
+}
+@keyframes cardPop{ from{ transform: scale(.85); opacity: 0; } to{ transform: scale(1); opacity: 1; } }
+
+.card-title { margin: 0 0 14px; font-size: 22px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; }
+.battle { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.side { flex: 1 1 0; min-width: 0; }
+.side-name { font-size: 12px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; opacity: .9; margin-bottom: 8px; }
+.vs { font-size: 22px; opacity: .6; flex: 0 0 auto; padding: 0 2px; }
+
+.tray { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; align-content: flex-start; min-height: 40px; }
+.mdie {
+  width: 30px; height: 30px; border-radius: 7px; background: #fff; border: 2px solid #141414;
+  display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+  padding: 3px; gap: 1px;
+}
+.mdie i { border-radius: 50%; background: transparent; }
+.mdie i.on { background: #141414; }
+
+@keyframes shakeDie{
+  0%{ transform: translate(0,0) rotate(0deg); }
+  20%{ transform: translate(-3px,-4px) rotate(-14deg); }
+  40%{ transform: translate(3px,2px) rotate(11deg); }
+  60%{ transform: translate(-2px,3px) rotate(-9deg); }
+  80%{ transform: translate(2px,-2px) rotate(7deg); }
+  100%{ transform: translate(0,0) rotate(0deg); }
+}
+.tray.shaking .mdie { animation: shakeDie 0.6s linear infinite; }
+@keyframes popDie{ 0%{ transform: scale(.55); } 60%{ transform: scale(1.18); } 100%{ transform: scale(1); } }
+.mdie.reveal { animation: popDie 0.6s ease-out both; }
+
+.sum { margin-top: 8px; font-size: 26px; font-weight: 900; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
+.battle-result { margin-top: 14px; min-height: 24px; font-size: 16px; font-weight: 800; letter-spacing: .5px; opacity: 0; transition: opacity .5s ease; }
+.battle-result.win { color: #6ee787; opacity: 1; }
+.battle-result.lose{ color: #ff8a8a; opacity: 1; }
+
+.big-btn {
+  margin-top: 18px; width: 100%; padding: 15px 20px;
+  border-radius: 14px; border: none; cursor: pointer;
+  font-family: inherit; font-size: 17px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;
+  color: #10202f; background: linear-gradient(180deg, #ffe066, #f2b705);
+  box-shadow: 0 8px 0 #a87a00, 0 12px 24px rgba(0,0,0,.5);
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+.big-btn:active{ transform: translateY(5px); box-shadow: 0 3px 0 #a87a00, 0 6px 14px rgba(0,0,0,.5); }
+
+.circle-btn {
+  width: 50px; height: 50px; border-radius: 50%; border: none; cursor: pointer;
+  font-size: 28px; font-weight: 900; background: #444; color: #fff;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 4px 0 #222;
+  transition: transform .2s, box-shadow .2s;
+}
+.circle-btn:active { transform: translateY(3px); box-shadow: 0 1px 0 #222; }
+.circle-btn:disabled { opacity: 0.3; box-shadow: 0 4px 0 #111; }
+
+/* ============================================================
+   ГЛАВНОЕ МЕНЮ
+   ============================================================ */
+#menu {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px; padding: 26px;
+  background: radial-gradient(circle at 50% 38%, #21446b 0%, #0b1119 78%);
+}
+.logo { text-align: center; }
+.logo-dice { font-size: 54px; line-height: 1; filter: drop-shadow(0 6px 16px rgba(0,0,0,.6)); }
+.logo h1 { margin: 6px 0 2px; font-size: 30px; font-weight: 900; letter-spacing: 3px; color: #ffe066; text-shadow: 0 4px 0 rgba(0,0,0,.45); }
+.logo .sub { margin: 0; font-size: 13px; opacity: .7; letter-spacing: 1px; }
+.opt-group { width: min(92vw, 360px); }
+.opt-label { font-size: 12px; font-weight: 800; letter-spacing: 1.6px; text-transform: uppercase; opacity: .6; margin-bottom: 8px; text-align: center; }
+.opt-row { display: flex; gap: 10px; }
+.opt {
+  flex: 1 1 0; padding: 13px 8px; border-radius: 13px; cursor: pointer;
+  font-family: inherit; font-size: 15px; font-weight: 800; color: #cfe0f0;
+  background: rgba(255,255,255,.07); border: 2px solid rgba(255,255,255,.14);
+  transition: all .3s ease; -webkit-appearance: none;
+}
+.opt.selected { color: #10202f; background: linear-gradient(180deg, #ffe066, #f2b705); border-color: #fff3b0; box-shadow: 0 6px 16px rgba(242,183,5,.35); }
+#start-btn {
+  width: min(92vw, 360px); padding: 17px 20px; margin-top: 4px;
+  border-radius: 16px; border: none; cursor: pointer;
+  font-family: inherit; font-size: 19px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; color: #10202f;
+  background: linear-gradient(180deg, #7ef29b, #22b455); box-shadow: 0 8px 0 #14702f, 0 14px 28px rgba(0,0,0,.5);
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+#start-btn:active { transform: translateY(5px); box-shadow: 0 3px 0 #14702f, 0 6px 14px rgba(0,0,0,.5); }
+</style>
+</head>
+<body>
+
+<div id="vignette"></div>
+<canvas id="game"></canvas>
+
+<div id="event-log"></div>
+
+<div id="ui">
+  <button class="pass-btn" data-p="0"><div class="pass-circle" style="background:#4A90D9"></div><div class="pass-info"><span class="cnt">0</span><span class="lbl">PASS</span></div></button>
+  <button class="pass-btn" data-p="1"><div class="pass-circle" style="background:#E05252"></div><div class="pass-info"><span class="cnt">0</span><span class="lbl">PASS</span></div></button>
+  <button class="pass-btn" data-p="2"><div class="pass-circle" style="background:#4CAF50"></div><div class="pass-info"><span class="cnt">0</span><span class="lbl">PASS</span></div></button>
+  <button class="pass-btn" data-p="3"><div class="pass-circle" style="background:#E8C33A"></div><div class="pass-info"><span class="cnt">0</span><span class="lbl">PASS</span></div></button>
+</div>
+
+<div id="toast"></div>
+
+<div id="overlay" class="hidden">
+  <div id="battle-card" class="card hidden">
+    <h2 class="card-title">Бой!</h2>
+    <div class="battle">
+      <div class="side">
+        <div class="side-name" id="atk-name">Атака</div>
+        <div class="tray" id="atk-tray"></div>
+        <div class="sum" id="atk-sum">?</div>
+      </div>
+      <div class="vs">⚔</div>
+      <div class="side">
+        <div class="side-name" id="def-name">Защита</div>
+        <div class="tray" id="def-tray"></div>
+        <div class="sum" id="def-sum">?</div>
+      </div>
+    </div>
+    <div class="battle-result" id="battle-result"></div>
+  </div>
+
+  <div id="move-card" class="card hidden">
+    <h2 class="card-title">Передача</h2>
+    <p style="margin: 0 0 14px; font-size: 14px; opacity: .8;">Сколько кубиков передать?</p>
+    <div style="display: flex; justify-content: center; align-items: center; gap: 20px; margin-bottom: 20px;">
+      <button id="move-minus" class="circle-btn">−</button>
+      <span id="move-count" style="font-size: 38px; font-weight: 900; min-width: 50px; color: #ffe066;">1</span>
+      <button id="move-plus" class="circle-btn">+</button>
+    </div>
+    <div style="display: flex; gap: 10px;">
+      <button id="move-cancel" class="big-btn" style="background: #555; color: #fff; box-shadow: 0 8px 0 #333;">Отмена</button>
+      <button id="move-confirm" class="big-btn">ОК</button>
+    </div>
+  </div>
+
+  <div id="win-card" class="card hidden">
+    <h2 class="card-title" id="win-title">Победа!</h2>
+    <p class="win-sub" id="win-sub"></p>
+    <button id="again-btn" class="big-btn">Играть снова</button>
+  </div>
+</div>
+
+<div id="menu">
+  <div class="logo">
+    <div class="logo-dice">⚄</div>
+    <h1>DICE COMBAT</h1>
+    <p class="sub">Hotseat · 2–4 игрока</p>
+  </div>
+  <div class="opt-group">
+    <div class="opt-label">Игроков</div>
+    <div class="opt-row" id="opt-players">
+      <button class="opt selected" data-v="2">2</button>
+      <button class="opt" data-v="4">4</button>
+    </div>
+  </div>
+  <div class="opt-group">
+    <div class="opt-label">Карта</div>
+    <div class="opt-row" id="opt-map">
+      <button class="opt selected" data-v="big">Большая · 36</button>
+      <button class="opt" data-v="test">Тест · 2</button>
+    </div>
+  </div>
+  <button id="start-btn">Играть</button>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   1. КОНСТАНТЫ
+   ============================================================ */
+const TILE_W = 60, TILE_H = 30; 
+const HW = TILE_W / 2, HH = TILE_H / 2;
+const MAX_DICE = 8;
+
+const P_COLORS = [
+  { main: '#4A90D9', bg: '#2980b9', name: 'Синий' },   // Яркий синий фон
+  { main: '#E05252', bg: '#c0392b', name: 'Красный' }, // Яркий красный фон
+  { main: '#4CAF50', bg: '#27ae60', name: 'Зелёный' }, // Яркий зеленый фон
+  { main: '#E8C33A', bg: '#f39c12', name: 'Жёлтый' }   // Яркий желтый фон
+];
+const NEUTRAL_COLOR = '#8A929B';
+
+const PIP_MAP = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+
+/* ============================================================
+   2. ГЕНЕРАЦИЯ КАРТЫ
+   ============================================================ */
+function generateOrganicMap(cols, rows, numTerrs) {
+  const grid = Array.from({ length: rows }, () => Array(cols).fill(-1));
+  const seeds = [];
+  
+  const isInsideIsland = (c, r) => {
+    const nx = (c - cols/2) / (cols/2);
+    const ny = (r - rows/2) / (rows/2);
+    let dist = nx*nx * 1.5 + ny*ny * 0.9;
+    const noise = Math.sin(c * 0.8) * 0.1 + Math.cos(r * 0.8) * 0.1 + Math.sin(c*0.3 + r*0.3) * 0.05;
+    return dist < (0.9 + noise);
+  };
+
+  let attempts = 0;
+  while (seeds.length < numTerrs && attempts < 5000) {
+    attempts++;
+    const c = Math.floor(Math.random() * cols);
+    const r = Math.floor(Math.random() * rows);
+    if (isInsideIsland(c, r)) {
+      let tooClose = false;
+      for (const s of seeds) {
+        if (Math.hypot(s.c - c, s.r - r) < 2.2) { tooClose = true; break; }
+      }
+      if (!tooClose) seeds.push({ id: seeds.length, c, r });
+    }
+  }
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      if (isInsideIsland(c, r)) {
+        let minDist = Infinity, closestId = -1;
+        for (const s of seeds) {
+          const noise = Math.sin(c * 1.5) * Math.cos(r * 1.5) * 0.8 + Math.sin(c * 0.4 + r * 0.4) * 1.2;
+          const dist = Math.hypot(s.c - c, s.r - r) + noise;
+          if (dist < minDist) { minDist = dist; closestId = s.id; }
+        }
+        grid[r][c] = closestId;
+      }
+    }
+  }
+  return grid;
+}
+
+function parseMapLayout(layout) {
+  const territories = [], byId = new Map();
+  const rows = layout.length, cols = layout[0].length;
+
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const id = layout[r][c];
+      if (id === -1) continue;
+      if (!byId.has(id)) {
+        byId.set(id, { index: territories.length, id, tileList: [], neighbors: new Set(), cx:0, cy:0 });
+        territories.push(byId.get(id));
+      }
+      byId.get(id).tileList.push({ col: c, row: r });
+    }
+  }
+
+  const tiles = [], tileIndex = new Map();
+  for (const terr of territories) {
+    for (const t of terr.tileList) {
+      tiles.push({ col: t.col, row: t.row, terrIdx: terr.index });
+      tileIndex.set(t.col + ',' + t.row, { terrIdx: terr.index });
+    }
+    let sx = 0, sy = 0;
+    for (const t of terr.tileList) { sx += tileX(t.col, t.row); sy += tileY(t.col, t.row); }
+    const avgX = sx / terr.tileList.length, avgY = sy / terr.tileList.length;
+    let bestTile = terr.tileList[0], bestDist = Infinity;
+    for (const t of terr.tileList) {
+      const d = Math.hypot(tileX(t.col, t.row) - avgX, tileY(t.col, t.row) - avgY);
+      if (d < bestDist) { bestDist = d; bestTile = t; }
+    }
+    terr.cx = tileX(bestTile.col, bestTile.row);
+    terr.cy = tileY(bestTile.col, bestTile.row);
+  }
+
+  const DIRS = [[1,0], [-1,0], [0,1], [0,-1], [1,1], [1,-1], [-1,1], [-1,-1]];
+  for (const t of tiles) {
+    for (const [dc, dr] of DIRS) {
+      const n = tileIndex.get((t.col + dc) + ',' + (t.row + dr));
+      if (n && n.terrIdx !== t.terrIdx) {
+        territories[t.terrIdx].neighbors.add(n.terrIdx);
+        territories[n.terrIdx].neighbors.add(t.terrIdx);
+      }
+    }
+  }
+  territories.forEach(t => t.neighbors = [...t.neighbors]);
+  return { cols, rows, tiles, territories, tileIndex };
+}
+
+const MAP_TEST = { cols: 10, rows: 10, tiles: [{ col: 3, row: 2, territoryId: 0 }, { col: 4, row: 2, territoryId: 1 }, { col: 2, row: 3, territoryId: 0 }, { col: 3, row: 3, territoryId: 0 }, { col: 4, row: 3, territoryId: 1 }, { col: 5, row: 3, territoryId: 1 }] };
+function normalizeMapTest(raw) {
+  const territories = [
+    { index: 0, id: 0, tileList: [{col:3,row:2},{col:2,row:3},{col:3,row:3}], neighbors: [1] },
+    { index: 1, id: 1, tileList: [{col:4,row:2},{col:4,row:3},{col:5,row:3}], neighbors: [0] }
+  ];
+  const tiles = [], tileIndex = new Map();
+  for (const terr of territories) {
+    for (const t of terr.tileList) {
+      tiles.push({ col: t.col, row: t.row, terrIdx: terr.index });
+      tileIndex.set(t.col + ',' + t.row, { terrIdx: terr.index });
+    }
+    let bestTile = terr.tileList[0];
+    terr.cx = tileX(bestTile.col, bestTile.row);
+    terr.cy = tileY(bestTile.col, bestTile.row);
+  }
+  return { cols: 10, rows: 10, tiles, territories, tileIndex };
+}
+
+/* ============================================================
+   3. МАТЕМАТИКА
+   ============================================================ */
+function tileX(col, row){ return (col - row) * HW; }
+function tileY(col, row){ return (col + row) * HH; }
+function addDiamond(ctx, cx, cy){ ctx.moveTo(cx, cy - HH); ctx.lineTo(cx + HW, cy); ctx.lineTo(cx, cy + HH); ctx.lineTo(cx - HW, cy); ctx.closePath(); }
+function roundRectPath(c, x, y, w, h, r){
+  c.beginPath(); c.moveTo(x + r, y); c.lineTo(x + w - r, y);
+  c.quadraticCurveTo(x + w, y, x + w, y + r); c.lineTo(x + w, y + h - r);
+  c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h);
+  c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r);
+  c.quadraticCurveTo(x, y, x + r, y); c.closePath();
+}
+
+/* ============================================================
+   4. СОСТОЯНИЕ
+   ============================================================ */
+let map = null;
+const view = { scale: 1, ox: 0, oy: 0 };
+const state = { 
+  numPlayers: 2, owner: [], dice: [], current: 0, selected: null, phase: 'idle',
+  hasMovedDiceThisTurn: false,
+  capturedThisTurn: 0,
+  moveSource: -1, moveTarget: -1, moveAmount: 1, maxMoveAmount: 1
+};
+
+const fallingDice = [], flyingDice = [], particles = [];
+const eventLogEl = document.getElementById('event-log');
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const battleCard = document.getElementById('battle-card');
+const moveCard = document.getElementById('move-card');
+const winCard = document.getElementById('win-card');
+const toastEl = document.getElementById('toast');
+const passBtns = [...document.querySelectorAll('.pass-btn')];
+
+let dpr = 1, rafId = null;
+
+/* ============================================================
+   5. ЛОГИРОВАНИЕ
+   ============================================================ */
+function addLog(msg, color) {
+  const entry = document.createElement('div');
+  entry.className = 'log-entry';
+  entry.textContent = msg;
+  if (color) entry.style.color = color;
+  
+  eventLogEl.prepend(entry);
+  
+  if (eventLogEl.children.length > 4) {
+    eventLogEl.removeChild(eventLogEl.lastChild);
+  }
+}
+
+/* ============================================================
+   6. РАЗМЕРЫ
+   ============================================================ */
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  canvas.width = window.innerWidth * dpr;
+  canvas.height = window.innerHeight * dpr;
+  if (map) computeView();
+  requestRender();
+}
+
+function computeView() {
+  const W = window.innerWidth, H = window.innerHeight;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const t of map.tiles) {
+    const x = tileX(t.col, t.row), y = tileY(t.col, t.row);
+    minX = Math.min(minX, x - HW); maxX = Math.max(maxX, x + HW);
+    minY = Math.min(minY, y - HH); maxY = Math.max(maxY, y + HH);
+  }
+  const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+  const padX = 20, padY = 20;
+  let scale = Math.min((W - padX*2) / bw, (H - padY*2) / bh);
+  view.scale = Math.max(0.3, Math.min(scale, 1.8));
+  view.ox = W/2 - (minX + bw/2) * view.scale;
+  view.oy = H/2 - (minY + bh/2) * view.scale;
+}
+
+/* ============================================================
+   7. ОТРИСОВКА
+   ============================================================ */
+function requestRender() {
+  if (!map || rafId) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = null;
+    updateAnimations();
+    draw();
+    if (state.selected !== null || fallingDice.length || flyingDice.length || particles.length) requestRender();
+  });
+}
+
+function updateAnimations() {
+  for (let i = fallingDice.length - 1; i >= 0; i--) {
+    const d = fallingDice[i];
+    if (d.delay > 0) { d.delay -= 16; continue; }
+    d.y += (d.targetY - d.y) * 0.015;
+    if (Math.abs(d.y - d.targetY) < 1) fallingDice.splice(i, 1);
+  }
+  for (let i = flyingDice.length - 1; i >= 0; i--) {
+    const d = flyingDice[i];
+    d.progress += 0.025;
+    if (d.progress >= 1) { flyingDice.splice(i, 1); continue; }
+    d.x = d.startX + (d.endX - d.startX) * d.progress;
+    d.y = d.startY + (d.endY - d.startY) * d.progress - Math.sin(d.progress * Math.PI) * 80;
+  }
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.15; p.life -= 0.012;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+function draw() {
+  const W = window.innerWidth, H = window.innerHeight;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  
+  ctx.save();
+  ctx.translate(view.ox, view.oy);
+  ctx.scale(view.scale, view.scale);
+
+  for (const terr of map.territories) {
+    ctx.beginPath();
+    for (const t of terr.tileList) addDiamond(ctx, tileX(t.col, t.row), tileY(t.col, t.row));
+    const o = state.owner[terr.index];
+    ctx.fillStyle = (o >= 0 && o < state.numPlayers) ? P_COLORS[o].main : NEUTRAL_COLOR;
+    ctx.fill();
+  }
+
+  ctx.beginPath();
+  for (const t of map.tiles) {
+    const cx = tileX(t.col, t.row), cy = tileY(t.col, t.row);
+    if (needEdge(t.terrIdx, t.col, t.row - 1)) { ctx.moveTo(cx, cy - HH); ctx.lineTo(cx + HW, cy); }
+    if (needEdge(t.terrIdx, t.col, t.row + 1)) { ctx.moveTo(cx - HW, cy); ctx.lineTo(cx, cy + HH); }
+    if (needEdge(t.terrIdx, t.col + 1, t.row)) { ctx.moveTo(cx + HW, cy); ctx.lineTo(cx, cy + HH); }
+    if (needEdge(t.terrIdx, t.col - 1, t.row)) { ctx.moveTo(cx, cy - HH); ctx.lineTo(cx - HW, cy); }
+  }
+  ctx.strokeStyle = '#141414'; ctx.lineWidth = 5 / view.scale; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+
+  if (state.selected !== null && map.territories[state.selected]) {
+    const selTerr = map.territories[state.selected];
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+    
+    for (const nIdx of selTerr.neighbors) {
+      const nTerr = map.territories[nIdx];
+      ctx.beginPath();
+      for (const t of nTerr.tileList) addDiamond(ctx, tileX(t.col, t.row), tileY(t.col, t.row));
+      if (state.owner[nIdx] !== state.current) {
+        ctx.strokeStyle = `rgba(255, 80, 80, ${0.15 + 0.15 * pulse})`; ctx.lineWidth = (3 + 1 * pulse) / view.scale;
+      } else {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.1 + 0.1 * pulse})`; ctx.lineWidth = 1.5 / view.scale;
+      }
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    for (const t of selTerr.tileList) addDiamond(ctx, tileX(t.col, t.row), tileY(t.col, t.row));
+    ctx.strokeStyle = `rgba(255, 226, 61, ${0.6 + 0.4 * pulse})`; ctx.lineWidth = (6 + 3 * pulse) / view.scale; ctx.stroke();
+  }
+
+  for (const terr of map.territories) {
+    const n = state.dice[terr.index] || 0;
+    if (n > 0) drawDiceStack(terr.cx, terr.cy, n, terr.index);
+  }
+
+  for (const d of flyingDice) drawFlatDie(d.x, d.y, d.face);
+  for (const d of fallingDice) drawFlatDie(d.x, d.y, d.face);
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / p.maxLife; ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1.0;
+  ctx.restore();
+}
+
+function needEdge(terrIdx, col, row) {
+  const n = map.tileIndex.get(col + ',' + row);
+  if (!n) return true;
+  return n.terrIdx !== terrIdx && n.terrIdx > terrIdx;
+}
+
+function drawDiceStack(cx, cy, count, terrIdx) {
+  const dieSize = 16, step = 6;
+  if (count <= 4) {
+    const totalH = (count - 1) * step, startY = cy - totalH / 2;
+    for (let i = count - 1; i >= 0; i--) drawFlatDie(cx, startY + i * step, (terrIdx * 3 + i) % 6 + 1, dieSize);
+  } else {
+    const c1 = 4, c2 = count - 4, offset = 9;
+    const h1 = (c1 - 1) * step, startY1 = cy - h1 / 2;
+    for (let i = c1 - 1; i >= 0; i--) drawFlatDie(cx - offset, startY1 + i * step, (terrIdx * 3 + i) % 6 + 1, dieSize);
+    const h2 = (c2 - 1) * step, startY2 = cy - h2 / 2;
+    for (let i = c2 - 1; i >= 0; i--) drawFlatDie(cx + offset, startY2 + i * step, (terrIdx * 3 + i + 4) % 6 + 1, dieSize);
+  }
+}
+
+function drawFlatDie(cx, cy, face, size = 16) {
+  const half = size / 2;
+  roundRectPath(ctx, cx - half, cy - half, size, size, Math.max(2, size * 0.2));
+  ctx.fillStyle = '#F8F8F3'; ctx.fill();
+  ctx.lineWidth = Math.max(1.2, size * 0.12); ctx.strokeStyle = '#141414'; ctx.stroke();
+  if (size < 10) return;
+  const pips = PIP_MAP[face] || [];
+  const pad = size * 0.25, pStep = (size - pad * 2) / 2, r = size * 0.09;
+  ctx.fillStyle = '#141414';
+  for (const idx of pips) {
+    const px = cx - half + pad + (idx % 3) * pStep;
+    const py = cy - half + pad + Math.floor(idx / 3) * pStep;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+/* ============================================================
+   8. ВВОД И ПЕРЕМЕЩЕНИЕ
+   ============================================================ */
+canvas.addEventListener('pointerdown', e => {
+  if (state.phase !== 'idle') return;
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const wx = (e.clientX - rect.left - view.ox) / view.scale;
+  const wy = (e.clientY - rect.top - view.oy) / view.scale;
+  const col = Math.round((wx / HW + wy / HH) / 2);
+  const row = Math.round((wy / HH - wx / HW) / 2);
+  const tile = map.tileIndex.get(col + ',' + row);
+  if (tile) handleTerritoryTap(tile.terrIdx);
+});
+
+function handleTerritoryTap(terrIdx) {
+  const owner = state.owner[terrIdx], sel = state.selected;
+
+  if (sel === null) {
+    if (owner === state.current && state.dice[terrIdx] > 1) {
+      state.selected = terrIdx; requestRender();
+    }
+    return;
+  }
+
+  if (terrIdx === sel) { state.selected = null; requestRender(); return; }
+
+  if (owner === state.current) {
+    const selTerr = map.territories[sel];
+    if (selTerr.neighbors.includes(terrIdx)) {
+      if (state.hasMovedDiceThisTurn) {
+        showToast('Передача уже была в этом ходу', '#ff9c9c');
+        state.selected = (state.dice[terrIdx] > 1) ? terrIdx : null;
+        requestRender();
+        return;
+      }
+      const maxMove = Math.min(3, state.dice[sel] - 1, MAX_DICE - state.dice[terrIdx]);
+      if (maxMove <= 0) {
+        showToast(state.dice[sel] <= 1 ? 'Нужно хотя бы 2 кубика' : 'Территория заполнена', '#ff9c9c');
+        state.selected = (state.dice[terrIdx] > 1) ? terrIdx : null;
+        requestRender();
+        return;
+      }
+      openMoveModal(sel, terrIdx, maxMove);
+      return;
+    } else {
+      state.selected = (state.dice[terrIdx] > 1) ? terrIdx : null;
+      requestRender();
+      return;
+    }
+  }
+
+  const selTerr = map.territories[sel];
+  if (selTerr.neighbors.includes(terrIdx)) {
+    state.selected = null; requestRender();
+    startBattle(sel, terrIdx);
+  } else {
+    state.selected = null; requestRender();
+    showToast('Не соседняя территория', '#ff9c9c');
+  }
+}
+
+/* ============================================================
+   9. ЛОГИКА ПЕРЕДАЧИ КУБИКОВ
+   ============================================================ */
+const moveCountEl = document.getElementById('move-count');
+const moveMinusBtn = document.getElementById('move-minus');
+const movePlusBtn = document.getElementById('move-plus');
+
+function openMoveModal(fromIdx, toIdx, maxAmount) {
+  state.phase = 'moving';
+  state.moveSource = fromIdx;
+  state.moveTarget = toIdx;
+  state.moveAmount = 1;
+  state.maxMoveAmount = maxAmount;
+  
+  updateMoveUI();
+  
+  overlay.classList.remove('hidden');
+  moveCard.classList.remove('hidden');
+  battleCard.classList.add('hidden');
+  winCard.classList.add('hidden');
+}
+
+function updateMoveUI() {
+  moveCountEl.textContent = state.moveAmount;
+  moveMinusBtn.disabled = state.moveAmount <= 1;
+  movePlusBtn.disabled = state.moveAmount >= state.maxMoveAmount;
+}
+
+moveMinusBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (state.moveAmount > 1) { state.moveAmount--; updateMoveUI(); }
+});
+
+movePlusBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (state.moveAmount < state.maxMoveAmount) { state.moveAmount++; updateMoveUI(); }
+});
+
+document.getElementById('move-cancel').addEventListener('click', e => {
+  e.stopPropagation();
+  closeMoveModal();
+});
+
+document.getElementById('move-confirm').addEventListener('click', e => {
+  e.stopPropagation();
+  executeMoveDice();
+  closeMoveModal();
+});
+
+function executeMoveDice() {
+  const fromIdx = state.moveSource;
+  const toIdx = state.moveTarget;
+  const amount = state.moveAmount;
+  
+  state.dice[fromIdx] -= amount;
+  state.dice[toIdx] += amount;
+  state.hasMovedDiceThisTurn = true;
+  
+  const fromTerr = map.territories[fromIdx];
+  const toTerr = map.territories[toIdx];
+  
+  for (let i = 0; i < amount; i++) {
+    flyingDice.push({
+      x: fromTerr.cx, y: fromTerr.cy - i*10,
+      startX: fromTerr.cx, startY: fromTerr.cy - i*10,
+      endX: toTerr.cx, endY: toTerr.cy - i*10,
+      progress: 0, face: 1 + Math.floor(Math.random()*6)
+    });
+  }
+  
+  addLog(`${P_COLORS[state.current].name} перекинул ${amount} куб.`, P_COLORS[state.current].main);
+  requestRender();
+  updateUI();
+}
+
+function closeMoveModal() {
+  state.phase = 'idle';
+  overlay.classList.add('hidden');
+  moveCard.classList.add('hidden');
+  state.selected = null;
+  requestRender();
+}
+
+/* ============================================================
+   10. БОЙ
+   ============================================================ */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const rollDice = n => Array.from({ length: n }, () => 1 + Math.floor(Math.random() * 6));
+
+function spawnExplosion(x, y, count) {
+  for (let i = 0; i < count * 6; i++) {
+    const angle = Math.random() * Math.PI * 2, speed = 2 + Math.random() * 5;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 2, life: 1.0, maxLife: 1.0, size: 2 + Math.random() * 4, color: Math.random() > 0.5 ? '#F8F8F3' : '#141414' });
+  }
+}
+
+async function startBattle(atkIdx, defIdx) {
+  if (state.phase !== 'idle') return;
+  state.phase = 'battle';
+
+  const aDice = state.dice[atkIdx], dDice = state.dice[defIdx];
+  const aRolls = rollDice(aDice), dRolls = rollDice(dDice);
+  const aSum = aRolls.reduce((a,b)=>a+b, 0), dSum = dRolls.reduce((a,b)=>a+b, 0);
+  const win = aSum > dSum;
+
+  showBattleModal(aDice, dDice, state.owner[atkIdx], state.owner[defIdx]);
+  startFaceShuffle();
+  await sleep(1500);
+  revealBattle(aRolls, dRolls, aSum, dSum, win);
+  await sleep(2000);
+
+  applyBattleResult(atkIdx, defIdx, win, aDice);
+  requestRender(); updateUI();
+  await sleep(500);
+
+  hideBattleModal();
+  state.phase = 'idle';
+  if (!checkGameOver()) requestRender();
+}
+
+function applyBattleResult(atkIdx, defIdx, win, aDice) {
+  if (win) {
+    state.capturedThisTurn++;
+    const defTerr = map.territories[defIdx];
+    spawnExplosion(defTerr.cx, defTerr.cy, state.dice[defIdx]);
+
+    state.owner[defIdx] = state.owner[atkIdx];
+    const fromTerr = map.territories[atkIdx], toTerr = map.territories[defIdx];
+    const moved = aDice - 1;
+    
+    state.dice[defIdx] = Math.min(MAX_DICE, moved);
+    state.dice[atkIdx] = 1;
+
+    for (let i = 0; i < Math.min(moved, 8); i++) {
+      flyingDice.push({
+        x: fromTerr.cx, y: fromTerr.cy - i*10, startX: fromTerr.cx, startY: fromTerr.cy - i*10,
+        endX: toTerr.cx, endY: toTerr.cy - i*10, progress: 0, face: 1 + Math.floor(Math.random()*6)
+      });
+    }
+    addLog(`${P_COLORS[state.owner[atkIdx]].name} захватил территорию!`, '#6ee787');
+  } else {
+    const atkTerr = map.territories[atkIdx];
+    const lostCount = aDice - 1;
+    if (lostCount > 0) spawnExplosion(atkTerr.cx, atkTerr.cy, lostCount);
+    state.dice[atkIdx] = 1;
+    addLog(`${P_COLORS[state.owner[atkIdx]].name} отбился!`, '#ff8a8a');
+  }
+  state.selected = null;
+}
+
+function checkGameOver() {
+  const alive = new Set(state.owner.filter(o => o >= 0));
+  if (alive.size === 1) { showWinModal([...alive][0]); return true; }
+  return false;
+}
+
+/* ============================================================
+   11. ХОДЫ И ПОДКРЕПЛЕНИЕ
+   ============================================================ */
+function hasTerritories(p) { return state.owner.includes(p); }
+
+function reinforce(player, captured) {
+  let numToBuff = Math.min(1 + captured, 3);
+  
+  const owned = [];
+  state.owner.forEach((o, i) => { if (o === player) owned.push(i); });
+  if (owned.length === 0) return;
+
+  numToBuff = Math.min(owned.length, numToBuff);
+  owned.sort(() => Math.random() - 0.5);
+  const selectedTerrs = owned.slice(0, numToBuff);
+
+  selectedTerrs.forEach((terrIdx, tIndex) => {
+    let diceToAdd = Math.floor(Math.random() * 3) + 1;
+    const currentDice = state.dice[terrIdx];
+    if (currentDice >= MAX_DICE) return;
+    
+    const spaceLeft = MAX_DICE - currentDice;
+    diceToAdd = Math.min(diceToAdd, spaceLeft);
+    const terr = map.territories[terrIdx];
+
+    for (let k = 0; k < diceToAdd; k++) {
+      fallingDice.push({
+        x: terr.cx + (Math.random() * 8 - 4), y: terr.cy - 600 - k * 40,
+        targetY: terr.cy - (currentDice + k) * 6,
+        delay: 400 + (tIndex * 600) + (k * 600),
+        face: 1 + Math.floor(Math.random() * 6)
+      });
+    }
+    state.dice[terrIdx] += diceToAdd;
+  });
+  
+  if (numToBuff > 0) {
+    addLog(`${P_COLORS[player].name} получает подкрепление (${numToBuff} терр.)`, P_COLORS[player].main);
+  }
+}
+
+function endTurn() {
+  if (state.phase !== 'idle') return;
+  state.selected = null;
+  state.hasMovedDiceThisTurn = false;
+  
+  reinforce(state.current, state.capturedThisTurn);
+
+  let next = state.current;
+  for (let i = 0; i < state.numPlayers; i++) {
+    next = (next + 1) % state.numPlayers;
+    if (hasTerritories(next)) break;
+  }
+  
+  addLog(`Ход переходит: ${P_COLORS[next].name}`, P_COLORS[next].main);
+  
+  state.current = next;
+  state.capturedThisTurn = 0;
+
+  requestRender(); updateUI(); showTurnToast(next);
+}
+
+function updateUI() {
+  const counts = new Array(state.numPlayers).fill(0);
+  state.owner.forEach(o => { if (o >= 0) counts[o]++; });
+  passBtns.forEach((btn, i) => {
+    if (i >= state.numPlayers) { btn.classList.add('hidden'); return; }
+    btn.classList.remove('hidden');
+    btn.querySelector('.pass-circle').style.background = P_COLORS[i].main;
+    btn.querySelector('.cnt').textContent = counts[i];
+    btn.classList.toggle('active', i === state.current);
+  });
+  document.body.style.backgroundColor = P_COLORS[state.current].bg;
+}
+
+let toastTimer = null;
+function showToast(text, color) {
+  toastEl.textContent = text; toastEl.style.color = color || '#fff';
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
+}
+function showTurnToast(p) { showToast('Ход: ' + P_COLORS[p].name, P_COLORS[p].main); }
+
+passBtns.forEach((btn, i) => {
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (i === state.current && state.phase === 'idle') endTurn();
+  });
+});
+
+/* ============================================================
+   12. ОКНО БОЯ (ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ)
+   ============================================================ */
+function setDieFace(el, face) {
+  if (el.children.length !== 9) { el.innerHTML = ''; for (let i = 0; i < 9; i++) el.appendChild(document.createElement('i')); }
+  const pips = PIP_MAP[face] || [];
+  for (let i = 0; i < 9; i++) el.children[i].classList.toggle('on', pips.includes(i));
+}
+
+function buildTray(trayEl, count) {
+  trayEl.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const d = document.createElement('div'); d.className = 'mdie';
+    d.style.animationDelay = (Math.random() * 0.35).toFixed(2) + 's';
+    setDieFace(d, 1 + Math.floor(Math.random() * 6));
+    trayEl.appendChild(d);
+  }
+}
+
+let shuffleTimer = null;
+function startFaceShuffle() {
+  stopFaceShuffle();
+  shuffleTimer = setInterval(() => {
+    document.querySelectorAll('#atk-tray .mdie, #def-tray .mdie').forEach(d => setDieFace(d, 1 + Math.floor(Math.random()*6)));
+  }, 120);
+}
+function stopFaceShuffle() { if (shuffleTimer) { clearInterval(shuffleTimer); shuffleTimer = null; } }
+
+function showBattleModal(aDice, dDice, atkP, defP) {
+  document.getElementById('atk-name').textContent = P_COLORS[atkP].name;
+  document.getElementById('atk-name').style.color = P_COLORS[atkP].main;
+  document.getElementById('def-name').textContent = P_COLORS[defP].name;
+  document.getElementById('def-name').style.color = P_COLORS[defP].main;
+
+  const atkTray = document.getElementById('atk-tray'), defTray = document.getElementById('def-tray');
+  buildTray(atkTray, aDice); buildTray(defTray, dDice);
+  atkTray.classList.add('shaking'); defTray.classList.add('shaking');
+
+  document.getElementById('atk-sum').textContent = '?';
+  document.getElementById('def-sum').textContent = '?';
+  const res = document.getElementById('battle-result'); res.textContent = ''; res.className = 'battle-result';
+
+  overlay.classList.remove('hidden'); battleCard.classList.remove('hidden'); moveCard.classList.add('hidden'); winCard.classList.add('hidden');
+}
+
+function revealBattle(aRolls, dRolls, aSum, dSum, win) {
+  stopFaceShuffle();
+  const atkTray = document.getElementById('atk-tray'), defTray = document.getElementById('def-tray');
+  atkTray.classList.remove('shaking'); defTray.classList.remove('shaking');
+
+  atkTray.querySelectorAll('.mdie').forEach((d, i) => { d.style.animationDelay = (i*0.12).toFixed(2)+'s'; setDieFace(d, aRolls[i]); d.classList.add('reveal'); });
+  defTray.querySelectorAll('.mdie').forEach((d, i) => { d.style.animationDelay = (i*0.12).toFixed(2)+'s'; setDieFace(d, dRolls[i]); d.classList.add('reveal'); });
+
+  document.getElementById('atk-sum').textContent = aSum;
+  document.getElementById('def-sum').textContent = dSum;
+  const res = document.getElementById('battle-result');
+  res.textContent = win ? 'Атака успешна!' : 'Защита удержана!';
+  res.className = 'battle-result ' + (win ? 'win' : 'lose');
+}
+
+function hideBattleModal() { overlay.classList.add('hidden'); battleCard.classList.add('hidden'); stopFaceShuffle(); }
+
+function showWinModal(p) {
+  state.phase = 'gameover';
+  overlay.classList.remove('hidden'); battleCard.classList.add('hidden'); moveCard.classList.add('hidden'); winCard.classList.remove('hidden');
+  const t = document.getElementById('win-title'); t.textContent = 'Победа!'; t.style.color = P_COLORS[p].main;
+  document.getElementById('win-sub').textContent = P_COLORS[p].name + ' игрок захватил всю карту!';
+}
+
+document.getElementById('again-btn').addEventListener('click', () => { overlay.classList.add('hidden'); startGame(); });
+
+/* ============================================================
+   13. СТАРТ
+   ============================================================ */
+let chosenPlayers = 2, chosenMapKey = 'big';
+
+function startGame() {
+  if (chosenMapKey === 'big') {
+    const layout = generateOrganicMap(14, 18, 36);
+    map = parseMapLayout(layout);
+  } else {
+    map = normalizeMapTest(MAP_TEST);
+  }
+
+  let np = Math.min(chosenPlayers, map.territories.length); if (np < 2) np = 2;
+
+  state.numPlayers = np;
+  state.owner = new Array(map.territories.length).fill(-1);
+  state.dice = new Array(map.territories.length).fill(0);
+  state.current = 0; state.selected = null; state.phase = 'idle';
+  state.hasMovedDiceThisTurn = false;
+  state.capturedThisTurn = 0;
+
+  fallingDice.length = 0; flyingDice.length = 0; particles.length = 0;
+  eventLogEl.innerHTML = '';
+  addLog('Игра началась!', '#fff');
+
+  map.territories.forEach((t, i) => {
+    let p = 0;
+    if (np === 2) p = i < map.territories.length/2 ? 0 : 1;
+    else p = i % 4;
+    state.owner[t.index] = p;
+    const initialDice = 1 + Math.floor(Math.random() * 3);
+    state.dice[t.index] = initialDice;
+
+    for(let k=0; k<initialDice; k++) {
+      fallingDice.push({ 
+        x: t.cx, 
+        y: t.cy - 500 - k*30, 
+        targetY: t.cy - k*6, 
+        delay: Math.random() * 1500 + k * 400,
+        face: 1 + Math.floor(Math.random()*6) 
+      });
+    }
+  });
+
+  document.getElementById('menu').classList.add('hidden');
+  overlay.classList.add('hidden');
+  computeView(); updateUI(); requestRender(); showTurnToast(0);
+}
+
+function bindOptionGroup(groupId, onPick) {
+  const group = document.getElementById(groupId);
+  group.addEventListener('click', e => {
+    const btn = e.target.closest('.opt'); if (!btn) return;
+    [...group.querySelectorAll('.opt')].forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected'); onPick(btn.dataset.v);
+  });
+}
+
+bindOptionGroup('opt-players', v => chosenPlayers = parseInt(v, 10));
+bindOptionGroup('opt-map', v => chosenMapKey = v);
+document.getElementById('start-btn').addEventListener('click', startGame);
+
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('touchmove', e => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+
+resize();
+</script>
+</body>
+</html>
