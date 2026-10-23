@@ -556,4 +556,542 @@ function draw() {
   for (const terr of map.territories) {
     ctx.beginPath();
     for (const t of terr.tileList) addDiamond(ctx, tileX(t.col, t.row), tileY(t.col, t.row));
-    const o = state.owner
+    const o = state.owner[terr.index];
+    ctx.fillStyle = (o >= 0 && o < state.numPlayers) ? P_COLORS[o].main : NEUTRAL_COLOR;
+    ctx.fill();
+  }
+
+  ctx.beginPath();
+  for (const t of map.tiles) {
+    const cx = tileX(t.col, t.row), cy = tileY(t.col, t.row);
+    if (needEdge(t.terrIdx, t.col, t.row - 1)) { ctx.moveTo(cx, cy - HH); ctx.lineTo(cx + HW, cy); }
+    if (needEdge(t.terrIdx, t.col, t.row + 1)) { ctx.moveTo(cx - HW, cy); ctx.lineTo(cx, cy + HH); }
+    if (needEdge(t.terrIdx, t.col + 1, t.row)) { ctx.moveTo(cx + HW, cy); ctx.lineTo(cx, cy + HH); }
+    if (needEdge(t.terrIdx, t.col - 1, t.row)) { ctx.moveTo(cx, cy - HH); ctx.lineTo(cx - HW, cy); }
+  }
+  ctx.strokeStyle = '#141414'; ctx.lineWidth = 5 / view.scale; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+
+  if (state.selected !== null && map.territories[state.selected]) {
+    const selTerr = map.territories[state.selected];
+    const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+    
+    for (const nIdx of selTerr.neighbors) {
+      const nTerr = map.territories[nIdx];
+      ctx.beginPath();
+      for (const t of nTerr.tileList) addDiamond(ctx, tileX(t.col, t.row), tileY(t.col, t.row));
+      if (state.owner[nIdx] !== state.current) {
+        ctx.strokeStyle = `rgba(255, 80, 80, ${0.15 + 0.15 * pulse})`; ctx.lineWidth = (3 + 1 * pulse) / view.scale;
+      } else {
+        ctx.strokeStyle = `rgba(255, 255, 255, ${0.1 + 0.1 * pulse})`; ctx.lineWidth = 1.5 / view.scale;
+      }
+      ctx.stroke();
+    }
+
+    ctx.beginPath();
+    for (const t of selTerr.tileList) addDiamond(ctx, tileX(t.col, t.row), tileY(t.col, t.row));
+    ctx.strokeStyle = `rgba(255, 226, 61, ${0.6 + 0.4 * pulse})`; ctx.lineWidth = (6 + 3 * pulse) / view.scale; ctx.stroke();
+  }
+
+  for (const terr of map.territories) {
+    const n = state.dice[terr.index] || 0;
+    if (n > 0) drawDiceStack(terr.cx, terr.cy, n, terr.index);
+  }
+
+  for (const d of flyingDice) drawFlatDie(d.x, d.y, d.face);
+  for (const d of fallingDice) drawFlatDie(d.x, d.y, d.face);
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / p.maxLife; ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1.0;
+  ctx.restore();
+}
+
+function needEdge(terrIdx, col, row) {
+  const n = map.tileIndex.get(col + ',' + row);
+  if (!n) return true;
+  return n.terrIdx !== terrIdx && n.terrIdx > terrIdx;
+}
+
+function drawDiceStack(cx, cy, count, terrIdx) {
+  const dieSize = 16, step = 6;
+  if (count <= 4) {
+    const totalH = (count - 1) * step, startY = cy - totalH / 2;
+    for (let i = count - 1; i >= 0; i--) drawFlatDie(cx, startY + i * step, (terrIdx * 3 + i) % 6 + 1, dieSize);
+  } else {
+    const c1 = 4, c2 = count - 4, offset = 9;
+    const h1 = (c1 - 1) * step, startY1 = cy - h1 / 2;
+    for (let i = c1 - 1; i >= 0; i--) drawFlatDie(cx - offset, startY1 + i * step, (terrIdx * 3 + i) % 6 + 1, dieSize);
+    const h2 = (c2 - 1) * step, startY2 = cy - h2 / 2;
+    for (let i = c2 - 1; i >= 0; i--) drawFlatDie(cx + offset, startY2 + i * step, (terrIdx * 3 + i + 4) % 6 + 1, dieSize);
+  }
+}
+
+function drawFlatDie(cx, cy, face, size = 16) {
+  const half = size / 2;
+  roundRectPath(ctx, cx - half, cy - half, size, size, Math.max(2, size * 0.2));
+  ctx.fillStyle = '#F8F8F3'; ctx.fill();
+  ctx.lineWidth = Math.max(1.2, size * 0.12); ctx.strokeStyle = '#141414'; ctx.stroke();
+  if (size < 10) return;
+  const pips = PIP_MAP[face] || [];
+  const pad = size * 0.25, pStep = (size - pad * 2) / 2, r = size * 0.09;
+  ctx.fillStyle = '#141414';
+  for (const idx of pips) {
+    const px = cx - half + pad + (idx % 3) * pStep;
+    const py = cy - half + pad + Math.floor(idx / 3) * pStep;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+/* ============================================================
+   8. ВВОД И ПЕРЕМЕЩЕНИЕ
+   ============================================================ */
+canvas.addEventListener('pointerdown', e => {
+  if (state.phase !== 'idle') return;
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const wx = (e.clientX - rect.left - view.ox) / view.scale;
+  const wy = (e.clientY - rect.top - view.oy) / view.scale;
+  const col = Math.round((wx / HW + wy / HH) / 2);
+  const row = Math.round((wy / HH - wx / HW) / 2);
+  const tile = map.tileIndex.get(col + ',' + row);
+  if (tile) handleTerritoryTap(tile.terrIdx);
+});
+
+function handleTerritoryTap(terrIdx) {
+  const owner = state.owner[terrIdx], sel = state.selected;
+
+  if (sel === null) {
+    if (owner === state.current && state.dice[terrIdx] > 1) {
+      state.selected = terrIdx; requestRender();
+    }
+    return;
+  }
+
+  if (terrIdx === sel) { state.selected = null; requestRender(); return; }
+
+  if (owner === state.current) {
+    const selTerr = map.territories[sel];
+    if (selTerr.neighbors.includes(terrIdx)) {
+      if (state.hasMovedDiceThisTurn) {
+        showToast('Передача уже была в этом ходу', '#ff9c9c');
+        state.selected = (state.dice[terrIdx] > 1) ? terrIdx : null;
+        requestRender();
+        return;
+      }
+      const maxMove = Math.min(3, state.dice[sel] - 1, MAX_DICE - state.dice[terrIdx]);
+      if (maxMove <= 0) {
+        showToast(state.dice[sel] <= 1 ? 'Нужно хотя бы 2 кубика' : 'Территория заполнена', '#ff9c9c');
+        state.selected = (state.dice[terrIdx] > 1) ? terrIdx : null;
+        requestRender();
+        return;
+      }
+      openMoveModal(sel, terrIdx, maxMove);
+      return;
+    } else {
+      state.selected = (state.dice[terrIdx] > 1) ? terrIdx : null;
+      requestRender();
+      return;
+    }
+  }
+
+  const selTerr = map.territories[sel];
+  if (selTerr.neighbors.includes(terrIdx)) {
+    state.selected = null; requestRender();
+    startBattle(sel, terrIdx);
+  } else {
+    state.selected = null; requestRender();
+    showToast('Не соседняя территория', '#ff9c9c');
+  }
+}
+
+/* ============================================================
+   9. ЛОГИКА ПЕРЕДАЧИ КУБИКОВ
+   ============================================================ */
+const moveCountEl = document.getElementById('move-count');
+const moveMinusBtn = document.getElementById('move-minus');
+const movePlusBtn = document.getElementById('move-plus');
+
+function openMoveModal(fromIdx, toIdx, maxAmount) {
+  state.phase = 'moving';
+  state.moveSource = fromIdx;
+  state.moveTarget = toIdx;
+  state.moveAmount = 1;
+  state.maxMoveAmount = maxAmount;
+  
+  updateMoveUI();
+  
+  overlay.classList.remove('hidden');
+  moveCard.classList.remove('hidden');
+  battleCard.classList.add('hidden');
+  winCard.classList.add('hidden');
+}
+
+function updateMoveUI() {
+  moveCountEl.textContent = state.moveAmount;
+  moveMinusBtn.disabled = state.moveAmount <= 1;
+  movePlusBtn.disabled = state.moveAmount >= state.maxMoveAmount;
+}
+
+moveMinusBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (state.moveAmount > 1) { state.moveAmount--; updateMoveUI(); }
+});
+
+movePlusBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  if (state.moveAmount < state.maxMoveAmount) { state.moveAmount++; updateMoveUI(); }
+});
+
+document.getElementById('move-cancel').addEventListener('click', e => {
+  e.stopPropagation();
+  closeMoveModal();
+});
+
+document.getElementById('move-confirm').addEventListener('click', e => {
+  e.stopPropagation();
+  executeMoveDice();
+  closeMoveModal();
+});
+
+function executeMoveDice() {
+  const fromIdx = state.moveSource;
+  const toIdx = state.moveTarget;
+  const amount = state.moveAmount;
+  
+  state.dice[fromIdx] -= amount;
+  state.dice[toIdx] += amount;
+  state.hasMovedDiceThisTurn = true;
+  
+  const fromTerr = map.territories[fromIdx];
+  const toTerr = map.territories[toIdx];
+  
+  for (let i = 0; i < amount; i++) {
+    flyingDice.push({
+      x: fromTerr.cx, y: fromTerr.cy - i*10,
+      startX: fromTerr.cx, startY: fromTerr.cy - i*10,
+      endX: toTerr.cx, endY: toTerr.cy - i*10,
+      progress: 0, face: 1 + Math.floor(Math.random()*6)
+    });
+  }
+  
+  addLog(`${P_COLORS[state.current].name} перекинул ${amount} куб.`, P_COLORS[state.current].main);
+  requestRender();
+  updateUI();
+}
+
+function closeMoveModal() {
+  state.phase = 'idle';
+  overlay.classList.add('hidden');
+  moveCard.classList.add('hidden');
+  state.selected = null;
+  requestRender();
+}
+
+/* ============================================================
+   10. БОЙ
+   ============================================================ */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const rollDice = n => Array.from({ length: n }, () => 1 + Math.floor(Math.random() * 6));
+
+function spawnExplosion(x, y, count) {
+  for (let i = 0; i < count * 6; i++) {
+    const angle = Math.random() * Math.PI * 2, speed = 2 + Math.random() * 5;
+    particles.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 2, life: 1.0, maxLife: 1.0, size: 2 + Math.random() * 4, color: Math.random() > 0.5 ? '#F8F8F3' : '#141414' });
+  }
+}
+
+async function startBattle(atkIdx, defIdx) {
+  if (state.phase !== 'idle') return;
+  state.phase = 'battle';
+
+  const aDice = state.dice[atkIdx], dDice = state.dice[defIdx];
+  const aRolls = rollDice(aDice), dRolls = rollDice(dDice);
+  const aSum = aRolls.reduce((a,b)=>a+b, 0), dSum = dRolls.reduce((a,b)=>a+b, 0);
+  const win = aSum > dSum;
+
+  showBattleModal(aDice, dDice, state.owner[atkIdx], state.owner[defIdx]);
+  startFaceShuffle();
+  await sleep(1500);
+  revealBattle(aRolls, dRolls, aSum, dSum, win);
+  await sleep(2000);
+
+  applyBattleResult(atkIdx, defIdx, win, aDice);
+  requestRender(); updateUI();
+  await sleep(500);
+
+  hideBattleModal();
+  state.phase = 'idle';
+  if (!checkGameOver()) requestRender();
+}
+
+function applyBattleResult(atkIdx, defIdx, win, aDice) {
+  if (win) {
+    state.capturedThisTurn++;
+    const defTerr = map.territories[defIdx];
+    spawnExplosion(defTerr.cx, defTerr.cy, state.dice[defIdx]);
+
+    state.owner[defIdx] = state.owner[atkIdx];
+    const fromTerr = map.territories[atkIdx], toTerr = map.territories[defIdx];
+    const moved = aDice - 1;
+    
+    state.dice[defIdx] = Math.min(MAX_DICE, moved);
+    state.dice[atkIdx] = 1;
+
+    for (let i = 0; i < Math.min(moved, 8); i++) {
+      flyingDice.push({
+        x: fromTerr.cx, y: fromTerr.cy - i*10, startX: fromTerr.cx, startY: fromTerr.cy - i*10,
+        endX: toTerr.cx, endY: toTerr.cy - i*10, progress: 0, face: 1 + Math.floor(Math.random()*6)
+      });
+    }
+    addLog(`${P_COLORS[state.owner[atkIdx]].name} захватил территорию!`, '#6ee787');
+  } else {
+    const atkTerr = map.territories[atkIdx];
+    const lostCount = aDice - 1;
+    if (lostCount > 0) spawnExplosion(atkTerr.cx, atkTerr.cy, lostCount);
+    state.dice[atkIdx] = 1;
+    addLog(`${P_COLORS[state.owner[atkIdx]].name} отбился!`, '#ff8a8a');
+  }
+  state.selected = null;
+}
+
+function checkGameOver() {
+  const alive = new Set(state.owner.filter(o => o >= 0));
+  if (alive.size === 1) { showWinModal([...alive][0]); return true; }
+  return false;
+}
+
+/* ============================================================
+   11. ХОДЫ И ПОДКРЕПЛЕНИЕ
+   ============================================================ */
+function hasTerritories(p) { return state.owner.includes(p); }
+
+function reinforce(player, captured) {
+  let numToBuff = Math.min(1 + captured, 3);
+  
+  const owned = [];
+  state.owner.forEach((o, i) => { if (o === player) owned.push(i); });
+  if (owned.length === 0) return;
+
+  numToBuff = Math.min(owned.length, numToBuff);
+  owned.sort(() => Math.random() - 0.5);
+  const selectedTerrs = owned.slice(0, numToBuff);
+
+  selectedTerrs.forEach((terrIdx, tIndex) => {
+    let diceToAdd = Math.floor(Math.random() * 3) + 1;
+    const currentDice = state.dice[terrIdx];
+    if (currentDice >= MAX_DICE) return;
+    
+    const spaceLeft = MAX_DICE - currentDice;
+    diceToAdd = Math.min(diceToAdd, spaceLeft);
+    const terr = map.territories[terrIdx];
+
+    for (let k = 0; k < diceToAdd; k++) {
+      fallingDice.push({
+        x: terr.cx + (Math.random() * 8 - 4), y: terr.cy - 600 - k * 40,
+        targetY: terr.cy - (currentDice + k) * 6,
+        delay: 400 + (tIndex * 600) + (k * 600),
+        face: 1 + Math.floor(Math.random() * 6)
+      });
+    }
+    state.dice[terrIdx] += diceToAdd;
+  });
+  
+  if (numToBuff > 0) {
+    addLog(`${P_COLORS[player].name} получает подкрепление (${numToBuff} терр.)`, P_COLORS[player].main);
+  }
+}
+
+function endTurn() {
+  if (state.phase !== 'idle') return;
+  state.selected = null;
+  state.hasMovedDiceThisTurn = false;
+  
+  reinforce(state.current, state.capturedThisTurn);
+
+  let next = state.current;
+  for (let i = 0; i < state.numPlayers; i++) {
+    next = (next + 1) % state.numPlayers;
+    if (hasTerritories(next)) break;
+  }
+  
+  addLog(`Ход переходит: ${P_COLORS[next].name}`, P_COLORS[next].main);
+  
+  state.current = next;
+  state.capturedThisTurn = 0;
+
+  requestRender(); updateUI(); showTurnToast(next);
+}
+
+function updateUI() {
+  const counts = new Array(state.numPlayers).fill(0);
+  state.owner.forEach(o => { if (o >= 0) counts[o]++; });
+  passBtns.forEach((btn, i) => {
+    if (i >= state.numPlayers) { btn.classList.add('hidden'); return; }
+    btn.classList.remove('hidden');
+    btn.querySelector('.pass-circle').style.background = P_COLORS[i].main;
+    btn.querySelector('.cnt').textContent = counts[i];
+    btn.classList.toggle('active', i === state.current);
+  });
+  document.body.style.backgroundColor = P_COLORS[state.current].bg;
+}
+
+let toastTimer = null;
+function showToast(text, color) {
+  toastEl.textContent = text; toastEl.style.color = color || '#fff';
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1800);
+}
+function showTurnToast(p) { showToast('Ход: ' + P_COLORS[p].name, P_COLORS[p].main); }
+
+passBtns.forEach((btn, i) => {
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (i === state.current && state.phase === 'idle') endTurn();
+  });
+});
+
+/* ============================================================
+   12. ОКНО БОЯ (ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ)
+   ============================================================ */
+function setDieFace(el, face) {
+  if (el.children.length !== 9) { el.innerHTML = ''; for (let i = 0; i < 9; i++) el.appendChild(document.createElement('i')); }
+  const pips = PIP_MAP[face] || [];
+  for (let i = 0; i < 9; i++) el.children[i].classList.toggle('on', pips.includes(i));
+}
+
+function buildTray(trayEl, count) {
+  trayEl.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const d = document.createElement('div'); d.className = 'mdie';
+    d.style.animationDelay = (Math.random() * 0.35).toFixed(2) + 's';
+    setDieFace(d, 1 + Math.floor(Math.random() * 6));
+    trayEl.appendChild(d);
+  }
+}
+
+let shuffleTimer = null;
+function startFaceShuffle() {
+  stopFaceShuffle();
+  shuffleTimer = setInterval(() => {
+    document.querySelectorAll('#atk-tray .mdie, #def-tray .mdie').forEach(d => setDieFace(d, 1 + Math.floor(Math.random()*6)));
+  }, 120);
+}
+function stopFaceShuffle() { if (shuffleTimer) { clearInterval(shuffleTimer); shuffleTimer = null; } }
+
+function showBattleModal(aDice, dDice, atkP, defP) {
+  document.getElementById('atk-name').textContent = P_COLORS[atkP].name;
+  document.getElementById('atk-name').style.color = P_COLORS[atkP].main;
+  document.getElementById('def-name').textContent = P_COLORS[defP].name;
+  document.getElementById('def-name').style.color = P_COLORS[defP].main;
+
+  const atkTray = document.getElementById('atk-tray'), defTray = document.getElementById('def-tray');
+  buildTray(atkTray, aDice); buildTray(defTray, dDice);
+  atkTray.classList.add('shaking'); defTray.classList.add('shaking');
+
+  document.getElementById('atk-sum').textContent = '?';
+  document.getElementById('def-sum').textContent = '?';
+  const res = document.getElementById('battle-result'); res.textContent = ''; res.className = 'battle-result';
+
+  overlay.classList.remove('hidden'); battleCard.classList.remove('hidden'); moveCard.classList.add('hidden'); winCard.classList.add('hidden');
+}
+
+function revealBattle(aRolls, dRolls, aSum, dSum, win) {
+  stopFaceShuffle();
+  const atkTray = document.getElementById('atk-tray'), defTray = document.getElementById('def-tray');
+  atkTray.classList.remove('shaking'); defTray.classList.remove('shaking');
+
+  atkTray.querySelectorAll('.mdie').forEach((d, i) => { d.style.animationDelay = (i*0.12).toFixed(2)+'s'; setDieFace(d, aRolls[i]); d.classList.add('reveal'); });
+  defTray.querySelectorAll('.mdie').forEach((d, i) => { d.style.animationDelay = (i*0.12).toFixed(2)+'s'; setDieFace(d, dRolls[i]); d.classList.add('reveal'); });
+
+  document.getElementById('atk-sum').textContent = aSum;
+  document.getElementById('def-sum').textContent = dSum;
+  const res = document.getElementById('battle-result');
+  res.textContent = win ? 'Атака успешна!' : 'Защита удержана!';
+  res.className = 'battle-result ' + (win ? 'win' : 'lose');
+}
+
+function hideBattleModal() { overlay.classList.add('hidden'); battleCard.classList.add('hidden'); stopFaceShuffle(); }
+
+function showWinModal(p) {
+  state.phase = 'gameover';
+  overlay.classList.remove('hidden'); battleCard.classList.add('hidden'); moveCard.classList.add('hidden'); winCard.classList.remove('hidden');
+  const t = document.getElementById('win-title'); t.textContent = 'Победа!'; t.style.color = P_COLORS[p].main;
+  document.getElementById('win-sub').textContent = P_COLORS[p].name + ' игрок захватил всю карту!';
+}
+
+document.getElementById('again-btn').addEventListener('click', () => { overlay.classList.add('hidden'); startGame(); });
+
+/* ============================================================
+   13. СТАРТ
+   ============================================================ */
+let chosenPlayers = 2, chosenMapKey = 'big';
+
+function startGame() {
+  if (chosenMapKey === 'big') {
+    const layout = generateOrganicMap(14, 18, 36);
+    map = parseMapLayout(layout);
+  } else {
+    map = normalizeMapTest(MAP_TEST);
+  }
+
+  let np = Math.min(chosenPlayers, map.territories.length); if (np < 2) np = 2;
+
+  state.numPlayers = np;
+  state.owner = new Array(map.territories.length).fill(-1);
+  state.dice = new Array(map.territories.length).fill(0);
+  state.current = 0; state.selected = null; state.phase = 'idle';
+  state.hasMovedDiceThisTurn = false;
+  state.capturedThisTurn = 0;
+
+  fallingDice.length = 0; flyingDice.length = 0; particles.length = 0;
+  eventLogEl.innerHTML = '';
+  addLog('Игра началась!', '#fff');
+
+  map.territories.forEach((t, i) => {
+    let p = 0;
+    if (np === 2) p = i < map.territories.length/2 ? 0 : 1;
+    else p = i % 4;
+    state.owner[t.index] = p;
+    const initialDice = 1 + Math.floor(Math.random() * 3);
+    state.dice[t.index] = initialDice;
+
+    for(let k=0; k<initialDice; k++) {
+      fallingDice.push({ 
+        x: t.cx, 
+        y: t.cy - 500 - k*30, 
+        targetY: t.cy - k*6, 
+        delay: Math.random() * 1500 + k * 400,
+        face: 1 + Math.floor(Math.random()*6) 
+      });
+    }
+  });
+
+  document.getElementById('menu').classList.add('hidden');
+  overlay.classList.add('hidden');
+  computeView(); updateUI(); requestRender(); showTurnToast(0);
+}
+
+function bindOptionGroup(groupId, onPick) {
+  const group = document.getElementById(groupId);
+  group.addEventListener('click', e => {
+    const btn = e.target.closest('.opt'); if (!btn) return;
+    [...group.querySelectorAll('.opt')].forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected'); onPick(btn.dataset.v);
+  });
+}
+
+bindOptionGroup('opt-players', v => chosenPlayers = parseInt(v, 10));
+bindOptionGroup('opt-map', v => chosenMapKey = v);
+document.getElementById('start-btn').addEventListener('click', startGame);
+
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 250));
+document.addEventListener('gesturestart', e => e.preventDefault());
+document.addEventListener('touchmove', e => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+
+resize();
+</script>
+</body>
+</html>
